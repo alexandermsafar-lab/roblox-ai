@@ -12,6 +12,7 @@ A curated collection of Roblox UI references for Claude Code, Codex, and other A
 ## Contents
 | Path | What | Size |
 |---|---|---|
+| [`mobile-game/`](mobile-game/README.md) | **Sky Bridge Blitz**: 3D runner-shooter mobile game (Three.js + Capacitor), ready for Xcode / App Store | iOS + Android + web |
 | [`ui-styles/`](ui-styles/GUI-STYLES.md) | GUI styles, one folder each, with palettes and recipes; [40 extra UI briefs](ui-styles/EXTRA-REFERENCES.md) | 112 styles + 40 briefs |
 | [`animations/`](animations/ANIMATIONS.md) | Animation patterns + [25 extra animation briefs](animations/EXTRA-REFERENCES.md) | 33 + 25 |
 | [`cutscenes/`](cutscenes/CUTSCENES.md) | Camera and dialogue patterns + [20 extra scene briefs](cutscenes/EXTRA-REFERENCES.md) | 18 + 20 |

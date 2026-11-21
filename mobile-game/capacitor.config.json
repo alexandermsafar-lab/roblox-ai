@@ -1,0 +1,22 @@
+{
+  "appId": "com.skybridgeblitz.game",
+  "appName": "Sky Bridge Blitz",
+  "webDir": "dist",
+  "backgroundColor": "#2a7fe0",
+  "ios": {
+    "contentInset": "never",
+    "backgroundColor": "#2a7fe0",
+    "scrollEnabled": false
+  },
+  "android": {
+    "backgroundColor": "#2a7fe0"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 1500,
+      "launchAutoHide": false,
+      "backgroundColor": "#2a7fe0",
+      "showSpinner": false
+    }
+  }
+}
