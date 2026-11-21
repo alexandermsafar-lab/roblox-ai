@@ -4,7 +4,8 @@ import {
   BRIDGE_W, buildEnvironment, buildScenery, makeBarrel, setBarrelLabel, makeGatePanel, drawGate,
   makeCar, makeHologram, Label, gateText,
 } from './models.js';
-import { Particles, Flashes } from './fx.js';
+import { Effects } from './fx.js';
+import { createLighting } from './lighting.js';
 import { generateLevel, mulberry32 } from './level.js';
 import { WEAPONS, VEHICLE } from './weapons.js';
 
@@ -38,33 +39,17 @@ export class Game {
     this.renderer = renderer;
 
     const scene = new THREE.Scene();
-    scene.fog = new THREE.Fog(0xd4e9f8, 50, 150);
     this.scene = scene;
 
     this.camera = new THREE.PerspectiveCamera(56, 1, 0.1, 500);
-    scene.add(new THREE.HemisphereLight(0xeaf6ff, 0x6b7a90, 1.25));
-    const sun = new THREE.DirectionalLight(0xfff2dc, 1.6);
-    sun.position.set(6, 12, 8);
-    scene.add(sun);
+    this.lighting = createLighting(scene, renderer);
 
     this.scenery = buildScenery(scene);
     this.soldierR = new CrowdRenderer(scene, MAX_SOLDIERS + 40, soldierParts());
     this.zombieR = new CrowdRenderer(scene, 700, zombieParts());
-    this.particles = new Particles(scene);
-    this.flashes = new Flashes(scene);
-
-    // bullets
-    this.bulletMesh = new THREE.InstancedMesh(
-      new THREE.BoxGeometry(1, 1, 1),
-      new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false }),
-      MAX_BULLETS,
-    );
-    this.bulletMesh.setColorAt(0, new THREE.Color(0xffffff));
-    this.bulletMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    this.bulletMesh.frustumCulled = false;
-    this.bulletMesh.count = 0;
-    scene.add(this.bulletMesh);
+    this.fx = new Effects(scene);
     this.bullets = [];
+    this.gunIndex = soldierParts().findIndex((p) => p.name === 'gun');
 
     // squad counter badge
     this.countLabel = new Label(1.6, 0.8, 192, 96);
@@ -155,8 +140,7 @@ export class Game {
     this.deadSoldiers = [];
     this.pickups = [];
     this.bullets = [];
-    this.particles.clear();
-    this.flashes.clear();
+    this.fx.clear();
   }
 
   _add(obj) {
@@ -253,7 +237,7 @@ export class Game {
     this._addSoldiers(mods.startSoldiers || 1, true);
     this.state = 'play';
     this.countSprite.visible = true;
-    this.flashes.beam(0, 0, 1.6);
+    this.fx.pickupBurst(0, 0, 1.6);
     this._shotT = 0;
     this._lastCount = -1;
   }
@@ -295,7 +279,7 @@ export class Game {
         partScale: { gun: this.weapon.gunScale },
       });
     }
-    if (!quiet && n > 0) this.flashes.ring(this.sx, this.sz, 0x7fd0ff, 4);
+    if (!quiet && n > 0) this.fx.spawnPop(this.sx, this.sz, 4);
   }
 
   _killSoldiers(n) {
@@ -308,13 +292,13 @@ export class Game {
   _soldierDie(s) {
     s.deadT = 0;
     this.deadSoldiers.push(s);
-    this.particles.spawn(s.x, 1, s.z, { count: 5, color: [0xb02a2a, 0x7a1d1d], size: 0.15, speed: 2, up: 3 });
+    this.fx.soldierDeath(s.x, s.z);
   }
 
   _equip(w) {
     this.weapon = w;
     for (const s of this.soldiers) {
-      s.colors[8] = w.color;
+      s.colors[this.gunIndex] = w.color;
       s.partScale.gun = w.gunScale;
     }
   }
@@ -331,8 +315,7 @@ export class Game {
     if (this.state === 'play' || this.state === 'won') this._update(dt);
     else if (this.state === 'menu') this._updateMenu(dt);
     if (this.state !== 'paused') {
-      this.particles.update(dt);
-      this.flashes.update(dt, this.sx, this.sz);
+      this.fx.update(dt, this.sx, this.sz);
     }
     this._render();
   }
@@ -392,12 +375,8 @@ export class Game {
     } else if (!won && this.sz <= -this.length) {
       this.state = 'won';
       this.audio?.play('win');
-      this.flashes.beam(this.sx, this.sz, 3);
-      for (let i = 0; i < 6; i++) {
-        this.particles.spawn(this.sx + (Math.random() - 0.5) * 8, 4, this.sz - 3, {
-          count: 20, color: [0xff4d6d, 0xffd23a, 0x4dd2ff, 0x6dff6a, 0xc35bff], size: 0.22, speed: 5, up: 8, gravity: 6, life: 2.2,
-        });
-      }
+      this.fx.pickupBurst(this.sx, this.sz, 3);
+      this.fx.confetti(this.sx, this.sz);
       setTimeout(() => {
         this.hooks.onEnd?.({ win: true, stats: this.stats, survivors: this.soldiers.length, progress: 1 });
       }, 1400);
@@ -509,6 +488,7 @@ export class Game {
     this.bullets.push({
       x, y, z, pz: z, dist: 0, w, dmg, pierce: w.pierce || 0, hit: null, vx,
     });
+    this.fx.muzzle(x, y, z, w.color);
     this._shotT -= 1;
     if (this._shotT <= 0) {
       this._shotT = 6;
@@ -596,7 +576,7 @@ export class Game {
           if (b.w.splash) this._splash(b.x, br.z + 0.8, b.w.splash, b.dmg * 0.3);
           br.hp -= b.dmg;
           br.shake = 0.08;
-          if (Math.random() < 0.3) this.particles.spawn(b.x, 1.2, br.z + 1, { count: 1, color: b.w.color, size: 0.12, speed: 2, up: 2, life: 0.3 });
+          this.fx.barrelHit(b.x, 1.2, br.z + 1, b.w.color);
           if (br.hp <= 0) this._destroyBarrel(br, true);
           else setBarrelLabel(br.label, br.hp);
           consumed = true;
@@ -618,7 +598,7 @@ export class Game {
             }
             drawGate(p.label, p.op, p.val);
           }
-          if (Math.random() < 0.25) this.particles.spawn(b.x, 1.4, g.z + 0.1, { count: 1, color: 0xffffff, size: 0.1, speed: 2, up: 2, life: 0.25 });
+          this.fx.gateHit(b.x, 1.4, g.z + 0.1);
           consumed = true;
           break;
         }
@@ -633,11 +613,11 @@ export class Game {
     z.hp -= dmg;
     z.flash = 0.06;
     if (z.hp <= 0) this._killZombie(z, true);
+    else this.fx.zombieHit(z.x, 1.2, z.z);
   }
 
   _splash(x, z0, r, dmg) {
-    this.flashes.flash(x, 1, z0, 0x8cff5a, r * 3, 0.3);
-    this.particles.spawn(x, 0.8, z0, { count: 8, color: [0x8cff5a, 0xffffff, 0x4a4a4a], size: 0.2, speed: 4, up: 4 });
+    this.fx.splash(x, z0, r);
     for (let k = Math.floor(z0 - r) - 1; k <= Math.floor(z0 + r) + 1; k++) {
       const arr = this._bins.get(k);
       if (!arr) continue;
@@ -659,7 +639,7 @@ export class Game {
       this.stats.coins += 1;
       this.audio?.play('hit');
     }
-    this.particles.spawn(z.x, 1.1, z.z, { count: 4, color: [0x8a2020, 0x5a1515, z.colors[2]], size: 0.15, speed: 2.4, up: 3, life: 0.6 });
+    this.fx.zombieDeath(z.x, z.z, (z._saved || z.colors)[2]);
   }
 
   _updateZombies(dt) {
@@ -759,9 +739,7 @@ export class Game {
   }
 
   _explode(x, y, z, color = 0xff6a2a) {
-    this.flashes.flash(x, y + 0.5, z, 0xffa040, 9, 0.45);
-    this.particles.spawn(x, y, z, { count: 26, color: [0xe0302c, 0xa81c1c, 0xffb040, color], size: 0.32, speed: 7, up: 8, life: 1 });
-    this.particles.spawn(x, y + 0.5, z, { count: 12, color: [0x555555, 0x777777, 0x999999], size: 0.32, speed: 1.8, up: 2.5, gravity: -1, life: 0.9, grow: 1.2 });
+    this.fx.explosion(x, y, z, color);
     this.audio?.play('boom');
     this.hooks.haptic?.('medium');
   }
@@ -803,7 +781,7 @@ export class Game {
   }
 
   _collect(id) {
-    this.flashes.beam(this.sx, this.sz, 1.4 + Math.sqrt(this.soldiers.length) * 0.35);
+    this.fx.pickupBurst(this.sx, this.sz, 1.4 + Math.sqrt(this.soldiers.length) * 0.35);
     this.audio?.play('powerup');
     this.hooks.haptic?.('medium');
     this.stats.weapons++;
@@ -845,7 +823,7 @@ export class Game {
         }
         const good = p.op === 'mul' || p.val > 0;
         this.hooks.onToast?.(gateText(p.op, p.val), good ? '#5ad0ff' : '#ff5a5a');
-        this.flashes.flash(p.obj.position.x, 1.5, g.z, good ? 0x6fd0ff : 0xff5050, 8, 0.4);
+        this.fx.gatePass(p.obj.position.x, 1.5, g.z, good);
         for (const q of g.panels) q.obj.visible = false;
       }
     }
@@ -886,27 +864,13 @@ export class Game {
     for (const s of this.deadSoldiers) ss.push(s);
     this.soldierR.render(ss);
 
-    // bullets
-    const m = this._tmpM;
-    const q = this._tmpQ;
-    const up = this._up || (this._up = new THREE.Vector3(0, 1, 0));
-    let i = 0;
-    for (const b of this.bullets) {
-      if (i >= MAX_BULLETS) break;
-      q.setFromAxisAngle(up, -Math.atan2(b.vx, b.w.speed));
-      m.compose(this._tmpV.set(b.x, b.y, b.z), q, this._tmpS.set(b.w.size, b.w.size, b.w.len));
-      this.bulletMesh.setMatrixAt(i, m);
-      this.bulletMesh.setColorAt(i, this._tmpC.setHex(b.w.color));
-      i++;
-    }
-    this.bulletMesh.count = i;
-    this.bulletMesh.instanceMatrix.needsUpdate = true;
-    if (this.bulletMesh.instanceColor) this.bulletMesh.instanceColor.needsUpdate = true;
+    this.fx.bullets.render(this.bullets);
 
     if (this.countSprite.visible) {
       const depth = Math.sqrt(this.soldiers.length) * 0.45;
       this.countSprite.position.set(this.sx, 3.0 + depth * 0.3, this.sz - depth * 0.5);
     }
+    this.lighting.update(this.sx, this.sz);
     this.renderer.render(this.scene, cam);
   }
 }
