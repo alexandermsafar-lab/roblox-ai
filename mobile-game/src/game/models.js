@@ -107,36 +107,94 @@ barrelGeo.rotateZ(Math.PI / 2);
 const ringGeo = new THREE.CylinderGeometry(1.04, 1.04, 0.14, 28, 1);
 ringGeo.rotateZ(Math.PI / 2);
 const capGeo = new THREE.CircleGeometry(0.86, 28);
-barrelGeo._shared = ringGeo._shared = capGeo._shared = true;
+// Golden reward platform on top of the barrel: thin torus + soft additive glow disc
+const platRingGeo = new THREE.TorusGeometry(0.98, 0.055, 10, 56);
+platRingGeo.rotateX(Math.PI / 2);
+const platGlowGeo = new THREE.CircleGeometry(1.45, 48);
+platGlowGeo.rotateX(-Math.PI / 2);
+barrelGeo._shared = ringGeo._shared = capGeo._shared = platRingGeo._shared = platGlowGeo._shared = true;
 const barrelMat = new THREE.MeshLambertMaterial({ color: 0xe0302c, emissive: 0x3a0505 });
 const ringMat = new THREE.MeshLambertMaterial({ color: 0xa81c1c });
 const capMat = new THREE.MeshLambertMaterial({ color: 0xff5c4a });
+const platRingMat = new THREE.MeshBasicMaterial({ color: 0xffd25a, fog: false });
+let platGlowMat = null;
+function ringGlowTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const g = c.getContext('2d');
+  const grd = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  grd.addColorStop(0, 'rgba(255,190,60,0.30)');
+  grd.addColorStop(0.55, 'rgba(255,200,70,0.45)');
+  grd.addColorStop(0.68, 'rgba(255,236,150,1)');
+  grd.addColorStop(0.78, 'rgba(255,190,60,0.45)');
+  grd.addColorStop(1, 'rgba(255,170,40,0)');
+  g.fillStyle = grd;
+  g.fillRect(0, 0, 128, 128);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+const BARREL_FLASH = new THREE.Color(0xffd6e6);
+const BARREL_EMISSIVE = [new THREE.Color(0x3a0505), new THREE.Color(0x000000), new THREE.Color(0x000000)];
 
 export function makeBarrel(hp, rewardId) {
   const g = new THREE.Group();
-  const body = new THREE.Mesh(barrelGeo, barrelMat);
+  // per-barrel materials so a hit can flash just this barrel
+  const mats = [barrelMat.clone(), ringMat.clone(), capMat.clone()];
+  const body = new THREE.Mesh(barrelGeo, mats[0]);
   body.position.y = 1;
   g.add(body);
   for (const x of [-1.0, -0.35, 0.35, 1.0]) {
-    const r = new THREE.Mesh(ringGeo, ringMat);
+    const r = new THREE.Mesh(ringGeo, mats[1]);
     r.position.set(x, 1, 0);
     g.add(r);
   }
   for (const s of [-1, 1]) {
-    const cap = new THREE.Mesh(capGeo, capMat);
+    const cap = new THREE.Mesh(capGeo, mats[2]);
     cap.position.set(1.31 * s, 1, 0);
     cap.rotation.y = (Math.PI / 2) * s;
     g.add(cap);
   }
+  // golden ring platform on the top surface (barrel top is y = 2.0)
+  if (!platGlowMat) {
+    platGlowMat = new THREE.MeshBasicMaterial({
+      map: ringGlowTexture(), transparent: true, depthWrite: false,
+      blending: THREE.AdditiveBlending, fog: false,
+    });
+  }
+  const plat = new THREE.Group();
+  plat.position.y = 2.02;
+  const glow = new THREE.Mesh(platGlowGeo, platGlowMat);
+  glow.renderOrder = 2;
+  plat.add(glow);
+  const ring = new THREE.Mesh(platRingGeo, platRingMat);
+  ring.position.y = 0.03;
+  plat.add(ring);
+  g.add(plat);
+  g.userData.flashMats = mats;
+
   const label = new Label(2.3, 1.15);
   label.mesh.position.set(0, 1.05, 1.06);
   g.add(label.mesh);
   setBarrelLabel(label, hp);
 
-  const holo = makeHologram(rewardId);
+  // 'squad' rewards stand real soldiers on the ring (placed by Game.js): no hologram
+  const holo = rewardId === 'squad' ? new THREE.Group() : makeHologram(rewardId);
   holo.position.set(0, 2.9, 0);
   g.add(holo);
-  return { group: g, label, holo };
+  return { group: g, label, holo, platform: plat };
+}
+
+// Hit flash: call every frame with a decaying 0..1 value. Accepts the makeBarrel()
+// result, a Game barrel entry ({ obj }) or the barrel group itself.
+export function flashBarrel(barrel, amount) {
+  const g = (barrel && (barrel.group || barrel.obj)) || barrel;
+  const mats = g && g.userData && g.userData.flashMats;
+  if (!mats) return;
+  const a = Math.max(0, Math.min(1, amount || 0));
+  for (let i = 0; i < mats.length; i++) {
+    mats[i].emissive.copy(BARREL_EMISSIVE[i]).lerp(BARREL_FLASH, a * 0.85);
+  }
 }
 
 export function setBarrelLabel(label, hp) {
@@ -205,6 +263,7 @@ function holoMat(color) {
 }
 
 export function makeHologram(id) {
+  if (id === 'squad' || (id !== 'car' && !WEAPONS[id])) return new THREE.Group();
   const color = id === 'car' ? VEHICLE.color : WEAPONS[id].color;
   const m = holoMat(color);
   const dark = holoMat(new THREE.Color(color).multiplyScalar(0.55));
